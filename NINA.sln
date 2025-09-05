@@ -3,16 +3,6 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.2.32630.192
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NINA", "NINA\NINA.csproj", "{7DEC1B46-9701-4E49-90C1-F4427845669E}"
-EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NINA.CustomControlLibrary", "NINA.CustomControlLibrary\NINA.CustomControlLibrary.csproj", "{39FEFC1E-7A69-440D-B38A-5B9469353491}"
-EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "nikoncswrapper", "nikoncswrapper\nikoncswrapper.csproj", "{AADE1DF5-4C46-4760-B72B-474D90336F5B}"
-EndProject
-Project("{B7DD6F7E-DEF8-4E67-B5B7-07EF123DB6F0}") = "NINA.Setup", "NINA.Setup\NINA.Setup.wixproj", "{35733D26-70E1-4CE8-A1FD-FB9B4C1A464C}"
-EndProject
-Project("{B7DD6F7E-DEF8-4E67-B5B7-07EF123DB6F0}") = "NINA.SetupBundle", "NINA.SetupBundle\NINA.SetupBundle.wixproj", "{3DE33B34-C3D7-4EFB-9563-77B2F07A9F2D}"
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{ACF75CFA-5ED0-4E99-AEDF-60B47F25599F}"
 	ProjectSection(SolutionItems) = preProject
 		.editorconfig = .editorconfig
@@ -27,6 +17,18 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		README.md = README.md
 		RELEASE_NOTES.md = RELEASE_NOTES.md
 	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "3rd Party", "3rd Party", "{D63B3F98-1CD5-454F-9717-307594C75669}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NINA", "NINA\NINA.csproj", "{7DEC1B46-9701-4E49-90C1-F4427845669E}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NINA.CustomControlLibrary", "NINA.CustomControlLibrary\NINA.CustomControlLibrary.csproj", "{39FEFC1E-7A69-440D-B38A-5B9469353491}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "nikoncswrapper", "nikoncswrapper\nikoncswrapper.csproj", "{AADE1DF5-4C46-4760-B72B-474D90336F5B}"
+EndProject
+Project("{B7DD6F7E-DEF8-4E67-B5B7-07EF123DB6F0}") = "NINA.Setup", "NINA.Setup\NINA.Setup.wixproj", "{35733D26-70E1-4CE8-A1FD-FB9B4C1A464C}"
+EndProject
+Project("{B7DD6F7E-DEF8-4E67-B5B7-07EF123DB6F0}") = "NINA.SetupBundle", "NINA.SetupBundle\NINA.SetupBundle.wixproj", "{3DE33B34-C3D7-4EFB-9563-77B2F07A9F2D}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NINA.MGEN", "NINA.MGEN\NINA.MGEN.csproj", "{D897BFFD-7777-44F5-9100-1FF0DB3B032F}"
 EndProject
@@ -51,8 +53,6 @@ EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Accord.Imaging (NETStandard)", "Accord.Imaging\Accord.Imaging (NETStandard).csproj", "{F1882ED8-D352-4B11-A0B5-02BF44625966}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NINA.Test", "NINA.Test\NINA.Test.csproj", "{F51E3DA4-B63C-4D96-97B2-DBD222E956BF}"
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "3rd Party", "3rd Party", "{D63B3F98-1CD5-454F-9717-307594C75669}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

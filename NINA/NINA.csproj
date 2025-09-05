@@ -222,6 +222,7 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <Resource Include="Resources\astrometry.net.png" />
+    <Resource Include="Resources\starpx.com.png" />
     <Content Include="3rd-party-licenses.txt">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>    
