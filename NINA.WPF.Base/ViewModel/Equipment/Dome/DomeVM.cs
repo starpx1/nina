@@ -89,7 +89,8 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
             this.updateTimer = deviceUpdateTimerFactory.Create(
                 GetDomeValues,
                 UpdateDomeValues,
-                profileService.ActiveProfile.ApplicationSettings.DevicePollingInterval
+                profileService.ActiveProfile.ApplicationSettings.DevicePollingInterval,
+                "Dome"
             );
 
             profileService.ProfileChanged += async (object sender, EventArgs e) => {
@@ -133,7 +134,12 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
 
                 if (DeviceChooserVM.SelectedDevice.Id == "No_Device") {
                     profileService.ActiveProfile.DomeSettings.Id = DeviceChooserVM.SelectedDevice.Id;
+                    profileService.ActiveProfile.DomeSettings.LastDeviceName = string.Empty;
                     return false;
+                }
+
+                if (DeviceChooserVM.SelectedDevice is OfflineDevice) {
+                    await Rescan();
                 }
 
                 applicationStatusMediator.StatusUpdate(
@@ -171,7 +177,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
                                 CanPark = Dome.CanPark,
                                 CanFindHome = Dome.CanFindHome,
                                 AtPark = Dome.AtPark,
-                                AtHome = Dome.AtPark,
+                                AtHome = Dome.AtHome,
                                 DriverFollowing = Dome.DriverFollowing,
                                 Slewing = Dome.Slewing,
                                 Azimuth = Dome.Azimuth,
@@ -186,6 +192,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
                             _ = updateTimer.Run();
 
                             profileService.ActiveProfile.DomeSettings.Id = Dome.Id;
+                            profileService.ActiveProfile.DomeSettings.LastDeviceName = Dome.DisplayName;
 
                             await (Connected?.InvokeAsync(this, new EventArgs()) ?? Task.CompletedTask);
                             Logger.Info($"Successfully connected Dome. Id: {Dome.Id} Name: {Dome.Name} DisplayName: {Dome.DisplayName} Driver Version: {Dome.DriverVersion}");
@@ -239,7 +246,8 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
                 { nameof(DomeInfo.AtHome), Dome?.AtHome ?? false },
                 { nameof(DomeInfo.DriverFollowing), Dome?.DriverFollowing ?? false },
                 { nameof(DomeInfo.Slewing), Dome?.Slewing ?? false },
-                { nameof(DomeInfo.Azimuth), Dome?.Azimuth ?? Double.NaN }
+                { nameof(DomeInfo.Azimuth), Dome?.Azimuth ?? double.NaN },
+                { nameof(DomeInfo.Altitude), Dome?.Altitude ?? double.NaN }
             };
 
             return domeValues;
@@ -288,7 +296,12 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
             DomeInfo.Slewing = (bool)(o ?? false);
 
             domeValues.TryGetValue(nameof(DomeInfo.Azimuth), out o);
-            DomeInfo.Azimuth = (double)(o ?? Double.NaN);
+            DomeInfo.Azimuth = (double)(o ?? double.NaN);
+
+            domeValues.TryGetValue(nameof(DomeInfo.Altitude), out o);
+            DomeInfo.Altitude = (double)(o ?? double.NaN);
+
+            DomeInfo.ApplicationFollowing = domeFollower.IsFollowing;
 
             BroadcastDomeInfo();
         }
@@ -363,7 +376,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
 
         public async Task<bool> OpenShutter(CancellationToken cancellationToken) {
             if (DomeInfo.Connected) {
-                if (Dome.CanSetShutter) {
+                if (DomeInfo.CanSetShutter) {
 
                     // 0. Check if the shutter/roof is moving toward the open state, and wait.
                     if (DomeInfo.ShutterStatus == ShutterState.ShutterOpening) {
@@ -404,7 +417,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
                         }
                     }
 
-                    // 3. Refuse to open the shutter/roof if RefuseUnsafeShutterMove is enabled and the mount is not parked. A disconnected mount is considered a failure of this test because mount state cannot be deterined.
+                    // 3. Refuse to open the shutter/roof if RefuseUnsafeShutterMove is enabled and the mount is not parked. A disconnected mount is considered a failure of this test because mount state cannot be determined.
                     // We do not proactively park the mount because doing so might drive the OTA into a closed roof. The user will need to sort out this situation.
                     if (profileService.ActiveProfile.DomeSettings.RefuseUnsafeShutterMove) {
                         if (TelescopeInfo.Connected) {
@@ -461,7 +474,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
 
         public async Task<bool> CloseShutter(CancellationToken cancellationToken) {
             if (DomeInfo.Connected) {
-                if (Dome.CanSetShutter) {
+                if (DomeInfo.CanSetShutter) {
 
                     // 0. Check if the shutter/roof is moving toward the closed state, and wait.
                     if (DomeInfo.ShutterStatus == ShutterState.ShutterClosing) {
@@ -500,7 +513,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
                         }
                     }
 
-                    // 3. If RefuseUnsafeShutterMove is enabled, refuse to close the shutter/roof if the mount is not parked A disconnected mount is considered a failure of this test because mount state cannot be deterined.
+                    // 3. If RefuseUnsafeShutterMove is enabled, refuse to close the shutter/roof if the mount is not parked A disconnected mount is considered a failure of this test because mount state cannot be determined.
                     // This is a fail-safe for any cases where we reach this point and the mount is not, or not yet, parked. This can be a driver bug or something else causing the mount to unpark.
                     if (profileService.ActiveProfile.DomeSettings.RefuseUnsafeShutterMove) {
                         if (TelescopeInfo.Connected) {
@@ -556,7 +569,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
         }
 
         public async Task<bool> Park(CancellationToken cancellationToken) {
-            if (Dome.CanPark) {
+            if (DomeInfo.CanPark) {
                 Logger.Info("Parking dome");
                 await DisableFollowing(cancellationToken);
                 if (profileService.ActiveProfile.DomeSettings.FindHomeBeforePark && Dome.CanFindHome) {
@@ -622,20 +635,20 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
 
         public bool CanSyncAzimuth {
             get {
-                if (Dome?.Connected != true || TelescopeInfo?.Connected != true) {
+                if (DomeInfo?.Connected != true || TelescopeInfo?.Connected != true) {
                     return false;
                 }
-                return Dome.CanSyncAzimuth;
+                return DomeInfo.CanSyncAzimuth;
             }
         }
 
         public async Task<bool> SlewToAzimuth(double degrees, CancellationToken token) {
-            if (Dome?.Connected == true) {
+            if (DomeInfo?.Connected == true) {
                 try {
                     var from = DomeInfo.Azimuth;
                     Logger.Info($"Slewing dome to azimuth {degrees}°");
                     progress.Report(new ApplicationStatus() { Status = Loc.Instance["LblSlew"] });
-                    await Dome?.SlewToAzimuth(degrees, token); 
+                    await Dome?.SlewToAzimuth(degrees, token);
                     var waitForUpdate = updateTimer.WaitForNextUpdate(token);
                     await CoreUtil.Wait(TimeSpan.FromSeconds(this.profileService.ActiveProfile.DomeSettings.SettleTimeSeconds), true, token, progress, Loc.Instance["LblSettle"]);
                     await waitForUpdate;
@@ -649,7 +662,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
         }
 
         private async Task<bool> ManualSlew(double degrees) {
-            if (Dome.CanSetAzimuth) {
+            if (DomeInfo.CanSetAzimuth) {
                 this.FollowEnabled = false;
                 Logger.Info($"Manually slewing dome to azimuth {degrees}°");
                 return await SlewToAzimuth(degrees, CancellationToken.None);
@@ -659,7 +672,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
         }
 
         private async Task<bool> RotateRelative(double degrees) {
-            if (Dome.CanSetAzimuth) {
+            if (DomeInfo.CanSetAzimuth) {
                 this.FollowEnabled = false;
                 var targetAzimuth = AstroUtil.EuclidianModulus(this.Dome.Azimuth + degrees, 360.0);
                 Logger.Info($"Rotating dome relatively by {degrees}°");
@@ -701,7 +714,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
 
         public bool FollowEnabled {
             get {
-                if (Dome?.Connected == true) {
+                if (DomeInfo?.Connected == true) {
                     return followEnabled;
                 } else {
                     return false;
@@ -717,7 +730,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
         }
 
         private void OnFollowChanged(bool followEnabled) {
-            if (followEnabled && Dome?.Connected == true) {
+            if (followEnabled && DomeInfo?.Connected == true) {
                 this.domeFollower.Start();
                 Logger.Info($"Dome following enabled");
             } else {
@@ -758,7 +771,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
         }
 
         public async Task<bool> EnableFollowing(CancellationToken cancellationToken) {
-            if (!Dome.Connected) {
+            if (!DomeInfo.Connected) {
                 return false;
             }
 
@@ -771,7 +784,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
         }
 
         public async Task<bool> DisableFollowing(CancellationToken cancellationToken) {
-            if (!Dome.Connected) {
+            if (!DomeInfo.Connected) {
                 return false;
             }
 
@@ -785,7 +798,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
 
         public void UpdateDeviceInfo(SafetyMonitorInfo deviceInfo) {
             SafetyMonitorInfo = deviceInfo;
-            if (Dome?.Connected == true && profileService.ActiveProfile.DomeSettings.CloseOnUnsafe) {
+            if (DomeInfo?.Connected == true && profileService.ActiveProfile.DomeSettings.CloseOnUnsafe) {
                 //Close dome when state switches from safe to unsafe
                 if (deviceInfo.Connected && !deviceInfo.IsSafe && Dome?.ShutterStatus == ShutterState.ShutterOpen) {
                     lock (lockObj) {
@@ -806,7 +819,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
         }
 
         public string Action(string actionName, string actionParameters) {
-            if (Dome?.Connected == true) {
+            if (DomeInfo?.Connected == true) {
                 return Dome.Action(actionName, actionParameters);
             } else {
                 Notification.ShowError(Loc.Instance["LblTelescopeNotConnectedForCommand"] + ": " + actionName);
@@ -815,15 +828,15 @@ namespace NINA.WPF.Base.ViewModel.Equipment.Dome {
         }
 
         public string SendCommandString(string command, bool raw = true) {
-            return Dome?.Connected == true ? Dome.SendCommandString(command, raw) : null;
+            return DomeInfo?.Connected == true ? Dome.SendCommandString(command, raw) : null;
         }
 
         public bool SendCommandBool(string command, bool raw = true) {
-            return Dome?.Connected == true ? Dome.SendCommandBool(command, raw) : false;
+            return DomeInfo?.Connected == true ? Dome.SendCommandBool(command, raw) : false;
         }
 
         public void SendCommandBlind(string command, bool raw = true) {
-            if (Dome?.Connected == true) {
+            if (DomeInfo?.Connected == true) {
                 Dome.SendCommandBlind(command, raw);
             }
         }

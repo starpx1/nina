@@ -36,7 +36,7 @@ using ASCOM.Alpaca.Discovery;
 
 namespace NINA.Equipment.Equipment.MyTelescope {
 
-    internal class AscomTelescope : AscomDevice<ITelescopeV3>, ITelescope, IDisposable {
+    internal class AscomTelescope : AscomDevice<ITelescopeV4>, ITelescope, IDisposable {
         private static readonly TimeSpan MERIDIAN_FLIP_SLEW_RETRY_WAIT = TimeSpan.FromMinutes(1);
         private const int MERIDIAN_FLIP_SLEW_RETRY_ATTEMPTS = 20;
         private const double TRACKING_RATE_EPSILON = 0.000001;
@@ -260,7 +260,7 @@ namespace NINA.Equipment.Equipment.MyTelescope {
 
         public Coordinates TargetCoordinates {
             get {
-                if (Connected) {
+                if (ShouldBeConnected) {
                     return _targetCoordinates;
                 }
                 return null;
@@ -275,7 +275,7 @@ namespace NINA.Equipment.Equipment.MyTelescope {
 
         public PierSide? TargetSideOfPier {
             get {
-                if (Connected) {
+                if (ShouldBeConnected) {
                     return targetSideOfPier;
                 } else {
                     return null;
@@ -452,7 +452,7 @@ namespace NINA.Equipment.Equipment.MyTelescope {
         }
 
         public void MoveAxis(TelescopeAxes axis, double rate) {
-            if (Connected) {
+            if (ShouldBeConnected) {
                 if (CanSlew) {
                     if (!AtPark) {
                         var actualRate = rate;
@@ -498,7 +498,7 @@ namespace NINA.Equipment.Equipment.MyTelescope {
         }
 
         public void PulseGuide(GuideDirections direction, int duration) {
-            if (Connected) {
+            if (ShouldBeConnected) {
                 if (CanPulseGuide) {
                     if (!AtPark) {
                         try {
@@ -543,7 +543,7 @@ namespace NINA.Equipment.Equipment.MyTelescope {
             }
         }
 
-        public bool CanSetTrackingEnabled => Connected && GetProperty(nameof(Telescope.CanSetTracking), false);
+        public bool CanSetTrackingEnabled => ShouldBeConnected && GetProperty(nameof(Telescope.CanSetTracking), false);
 
         public bool TrackingEnabled {
             get => GetProperty(nameof(Telescope.Tracking), false);
@@ -558,7 +558,7 @@ namespace NINA.Equipment.Equipment.MyTelescope {
         }
 
         public async Task<bool> SlewToCoordinates(Coordinates coordinates, CancellationToken token) {
-            if (Connected && !AtPark) {
+            if (ShouldBeConnected && !AtPark) {
                 try {
                     TrackingEnabled = true;
                     TargetCoordinates = coordinates.Transform(EquatorialSystem);
@@ -568,6 +568,36 @@ namespace NINA.Equipment.Equipment.MyTelescope {
                         InvalidatePropertyCache();
                     } else {
                         device.SlewToCoordinates(TargetCoordinates.RA, TargetCoordinates.Dec);
+                        await Task.Delay(200, token);
+                        while (Slewing) {
+                            await CoreUtil.Wait(TimeSpan.FromSeconds(profileService.ActiveProfile.ApplicationSettings.DevicePollingInterval), token);
+                        }
+                    }
+
+                    return true;
+                } catch (OperationCanceledException) {
+                    throw;
+                } catch (Exception e) {
+                    Logger.Error(e);
+                    Notification.ShowExternalError(e.Message, Loc.Instance["LblASCOMDriverError"]);
+                } finally {
+                    TargetCoordinates = null;
+                }
+            }
+            return false;
+        }
+
+        public async Task<bool> SlewToAltAz(TopocentricCoordinates coordinates, CancellationToken token) {
+            if (ShouldBeConnected && !AtPark && CanSlewAltAz) {
+                try {
+                    TrackingEnabled = false;
+                    TargetCoordinates = coordinates.Transform(EquatorialSystem);
+
+                    if (CanSlewAltAzAsync) {
+                        await device.SlewToAltAzTaskAsync(azimuth: coordinates.Azimuth.Degree, altitude: coordinates.Altitude.Degree, cancellationToken: token);
+                        InvalidatePropertyCache();
+                    } else {
+                        device.SlewToAltAz(Azimuth: coordinates.Azimuth.Degree, Altitude: coordinates.Altitude.Degree);
                         await Task.Delay(200, token);
                         while (Slewing) {
                             await CoreUtil.Wait(TimeSpan.FromSeconds(profileService.ActiveProfile.ApplicationSettings.DevicePollingInterval), token);
@@ -677,7 +707,7 @@ namespace NINA.Equipment.Equipment.MyTelescope {
 
         public bool CanMovePrimaryAxis {
             get {
-                if (Connected) {
+                if (ShouldBeConnected) {
                     return device.CanMoveAxis(ASCOM.Common.DeviceInterfaces.TelescopeAxis.Primary);
                 }
                 return false;
@@ -686,7 +716,7 @@ namespace NINA.Equipment.Equipment.MyTelescope {
 
         public bool CanMoveSecondaryAxis {
             get {
-                if (Connected) {
+                if (ShouldBeConnected) {
                     return device.CanMoveAxis(ASCOM.Common.DeviceInterfaces.TelescopeAxis.Secondary);
                 }
                 return false;
@@ -704,7 +734,7 @@ namespace NINA.Equipment.Equipment.MyTelescope {
                 return primaryMovingRate;
             }
             set {
-                if (Connected) {
+                if (ShouldBeConnected) {
                     primaryMovingRate = GetAdjustedMovingRate(value, primaryMovingRate, ASCOM.Common.DeviceInterfaces.TelescopeAxis.Primary);
                     RaisePropertyChanged();
                 }
@@ -722,7 +752,7 @@ namespace NINA.Equipment.Equipment.MyTelescope {
                 return secondaryMovingRate;
             }
             set {
-                if (Connected) {
+                if (ShouldBeConnected) {
                     secondaryMovingRate = GetAdjustedMovingRate(value, secondaryMovingRate, ASCOM.Common.DeviceInterfaces.TelescopeAxis.Secondary);
                     RaisePropertyChanged();
                 }
@@ -886,7 +916,7 @@ namespace NINA.Equipment.Equipment.MyTelescope {
 
         public TrackingRate TrackingRate {
             get {
-                if (!Connected || !TrackingEnabled) {
+                if (!ShouldBeConnected || !TrackingEnabled) {
                     return new TrackingRate() { TrackingMode = TrackingMode.Stopped };
                 } else if (!CanSetTrackingEnabled) {
                     return new TrackingRate() { TrackingMode = TrackingMode.Sidereal };
@@ -926,7 +956,7 @@ namespace NINA.Equipment.Equipment.MyTelescope {
                     throw new ArgumentException("TrackingMode cannot be set to Custom. Use SetCustomTrackingRate");
                 }
 
-                if (Connected && device.CanSetTracking) {
+                if (ShouldBeConnected && device.CanSetTracking) {
                     try {
                         // Set the mode regardless of whether it is the same as what is currently set
                         // Some ASCOM drivers incorrectly report custom rates as Sidereal, and this can help force set the tracking mode to the desired value
@@ -975,20 +1005,22 @@ namespace NINA.Equipment.Equipment.MyTelescope {
                 throw new NotSupportedException("Custom tracking rate not supported");
             }
 
-            try {
-                this.device.TrackingRate = DriveRate.Sidereal;
-            } catch (ASCOM.NotImplementedException pnie) {
-                // TrackingRate Write can throw a PropertyNotImplementedException.
-                Logger.Debug(pnie.Message);
-            }
-            if(this.CanSetTrackingEnabled) { 
-                this.device.Tracking = true;
+            if (rightAscensionRate != 0 || declinationRate != 0) {
+                try {
+                    this.device.TrackingRate = DriveRate.Sidereal;
+                } catch (ASCOM.NotImplementedException pnie) {
+                    // TrackingRate Write can throw a PropertyNotImplementedException.
+                    Logger.Debug(pnie.Message);
+                }
+                if (this.CanSetTrackingEnabled) {
+                    this.device.Tracking = true;
+                }
+                RaisePropertyChanged(nameof(TrackingMode));
+                RaisePropertyChanged(nameof(TrackingRate));
+                RaisePropertyChanged(nameof(TrackingEnabled));
             }
             this.device.RightAscensionRate = rightAscensionRate;
             this.device.DeclinationRate = declinationRate;
-            RaisePropertyChanged(nameof(TrackingMode));
-            RaisePropertyChanged(nameof(TrackingRate));
-            RaisePropertyChanged(nameof(TrackingEnabled));
         }
 
         protected override Task PostConnect() {
@@ -1000,8 +1032,8 @@ namespace NINA.Equipment.Equipment.MyTelescope {
             return Task.CompletedTask;
         }
 
-        protected override ITelescopeV3 GetInstance() {
-            if (deviceMeta == null) {
+        protected override ITelescopeV4 GetInstance() {
+            if (!IsAlpacaDevice()) {
                 return new Telescope(Id);
             } else {
                 return new ASCOM.Alpaca.Clients.AlpacaTelescope(deviceMeta.ServiceType, deviceMeta.IpAddress, deviceMeta.IpPort, deviceMeta.AlpacaDeviceNumber, false, null);

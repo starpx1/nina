@@ -13,6 +13,7 @@
 #endregion "copyright"
 
 using ASCOM;
+using ASCOM.Common;
 using ASCOM.Common.DeviceInterfaces;
 using NINA.Core.Locale;
 using NINA.Core.Utility;
@@ -34,20 +35,29 @@ namespace NINA.Equipment.Equipment {
     /// The unified class that handles the shared properties of all ASCOM devices like Connection, Generic Info and Setup
     /// </summary>
     public abstract class AscomDevice<DeviceT> : BaseINPC, IDevice
-        where DeviceT : IAscomDevice {
-                                                                                                                                                                                                                                      
+        where DeviceT : IAscomDeviceV2 {
+
+        private string ascomRegistrationName;
+
+
         public AscomDevice(string id, string name) {
             Id = id;
-            Name = name;
+            ascomRegistrationName = name;
             DisplayName = name;
             this.Category = "ASCOM";
         }
 
         public AscomDevice(ASCOM.Alpaca.Discovery.AscomDevice deviceMeta) : this(deviceMeta.UniqueId, deviceMeta.AscomDeviceName) {
             this.deviceMeta = deviceMeta;
+            name = deviceMeta.AscomDeviceName;
             DisplayName = $"{Name} @ {deviceMeta.HostName} #{deviceMeta.AlpacaDeviceNumber}";
             this.Category = "ASCOM Alpaca";
         }
+
+        public bool IsAlpacaDevice() {
+            return deviceMeta != null;
+        }
+
         protected readonly ASCOM.Alpaca.Discovery.AscomDevice deviceMeta;
 
         protected DeviceT device;
@@ -56,12 +66,14 @@ namespace NINA.Equipment.Equipment {
 
         protected object lockObj = new object();
 
-        public bool HasSetupDialog => !Connected;
+        public bool HasSetupDialog => !ShouldBeConnected;
 
         public string Id { get; }
 
-        public string Name { get; }
-        public string DisplayName { get; }
+        private string name;
+        public string Name => name ?? ascomRegistrationName;
+
+        public string DisplayName { get; private set; }
 
         public string Description {
             get {
@@ -90,7 +102,12 @@ namespace NINA.Equipment.Equipment {
             }
         }
 
-        private bool connected;
+        public bool HasDeviceStates { get; private set; } = false;
+        private List<StateValue> lastDeviceState;
+        private DateTimeOffset lastDeviceStatePoll;
+        private HashSet<string> deviceStateKeys = new HashSet<string>();
+
+        private bool connectedExpectation;
 
         private void DisconnectOnConnectionError() {
             try {
@@ -101,33 +118,47 @@ namespace NINA.Equipment.Equipment {
             }
         }
 
+        private bool TryReconnect() {
+            Connected = true;
+            if (propertyGETMemory.TryGetValue(nameof(Connected), out var getmemory)) {
+                getmemory.InvalidateCache();
+            }
+            if (!device.Connected) {
+                throw new NotConnectedException();
+            }            
+            Logger.Info($"{Name} reconnection successful");
+            return true;
+        }
+
+        protected bool ShouldBeConnected => connectedExpectation;
+
         public bool Connected {
             get {
                 lock (lockObj) {
-                    if (connected && device != null) {
+                    if (connectedExpectation && device != null) {
                         bool val = false;
+                        bool expected = connectedExpectation;
                         try {
-                            bool expected;
                             val = GetProperty(nameof(Connected), defaultValue: false, cacheInterval: TimeSpan.FromSeconds(1), rethrow: true);
-                            expected = connected;
                             if (expected != val) {
                                 Logger.Error($"{Name} should be connected but reports to be disconnected. Trying to reconnect...");
                                 try {
-                                    Connected = true;
-                                    if (propertyGETMemory.TryGetValue(nameof(Connected), out var getmemory)) {
-                                        getmemory.InvalidateCache();
-                                    }
-                                    if (!device.Connected) {
-                                        throw new NotConnectedException();
-                                    }
-                                    val = true;
-                                    Logger.Info($"{Name} reconnection successful");
+                                    val = TryReconnect();
                                 } catch (Exception ex) {
-                                    Logger.Error("Reconnection failed. The device might be disconnected! - ", ex);
+                                    Logger.Error("Reconnection failed. The device might be disconnected! - ", ex.InnerException ?? ex);
                                     DisconnectOnConnectionError();
                                 }
                             }
                         } catch (Exception ex) {
+                            if (IsAlpacaDevice() && expected != val) {
+                                Logger.Error($"{Name} should be connected but reports to be disconnected. Trying to reconnect...");
+                                try {
+                                    val = TryReconnect();
+                                } catch (Exception ex2) {
+                                    Logger.Error("Reconnection failed. The device might be disconnected! - ", ex2.InnerException ?? ex2);
+                                    ex = ex2;
+                                }
+                            }
                             Logger.Error(ex.InnerException ?? ex);
                             DisconnectOnConnectionError();
                         }
@@ -142,7 +173,7 @@ namespace NINA.Equipment.Equipment {
                     if (device != null) {
                         Logger.Debug($"SET {Name} Connected to {value}");
                         device.Connected = value;
-                        connected = value;
+                        connectedExpectation = value;
                         if (propertyGETMemory.TryGetValue(nameof(Connected), out var getmemory)) {
                             getmemory.InvalidateCache();
                         }
@@ -163,7 +194,7 @@ namespace NINA.Equipment.Equipment {
         }
 
         public string Action(string actionName, string actionParameters) {
-            if (Connected) {
+            if (ShouldBeConnected) {
                 return device.Action(actionName, actionParameters);
             } else {
                 return null;
@@ -171,7 +202,7 @@ namespace NINA.Equipment.Equipment {
         }
 
         public string SendCommandString(string command, bool raw = true) {
-            if (Connected) {
+            if (ShouldBeConnected) {
                 lock (lockObj) {
                     return device.CommandString(command, raw);
                 }
@@ -181,7 +212,7 @@ namespace NINA.Equipment.Equipment {
         }
 
         public bool SendCommandBool(string command, bool raw = true) {
-            if (Connected) {
+            if (ShouldBeConnected) {
                 lock (lockObj) {
                     return device.CommandBool(command, raw);
                 }
@@ -191,7 +222,7 @@ namespace NINA.Equipment.Equipment {
         }
 
         public void SendCommandBlind(string command, bool raw = true) {
-            if (Connected) {
+            if (ShouldBeConnected) {
                 lock (lockObj) {
                     device.CommandBlind(command, raw);
                 }
@@ -236,25 +267,70 @@ namespace NINA.Equipment.Equipment {
                     var concreteDevice = GetInstance();
                     device = concreteDevice;
 
+                    Logger.Trace($"{Name} - Calling Connect for {Id}");
+
                     Connected = true;
+
                     if (Connected) {
                         Logger.Trace($"{Name} - Calling PostConnect");
+
+                        try {
+                            var state = device.DeviceState;
+                            if (state?.Count > 0) {
+                                HasDeviceStates = true;
+                            } else {
+                                HasDeviceStates = false;
+                            }
+                            lastDeviceState = state;
+                            deviceStateKeys = new HashSet<string>(lastDeviceState.Select(x => x.Name.ToLower()));
+                            lastDeviceStatePoll = DateTimeOffset.UtcNow;
+                        } catch {
+                            HasDeviceStates = false;
+                        }
+                        
+                        if (name == null && !IsAlpacaDevice()) {
+                            try {
+                                // Update name of ASCOM after connection
+                                name = string.IsNullOrEmpty(device?.Name) ? ascomRegistrationName : device?.Name;
+                                DisplayName = $"{name} (ASCOM)";
+                            } catch {
+                                name = ascomRegistrationName;
+                            }
+                        }
+
                         await PostConnect();
                         RaiseAllPropertiesChanged();
                     }
                 } catch (Exception ex) {
                     Logger.Error(ex);
                     Notification.ShowExternalError(string.Format(Loc.Instance["LblUnableToConnect"], Name, ex.Message), Loc.Instance["LblASCOMDriverError"]);
+                    try {
+                        Disconnect();
+                    } catch { }
                 }
                 return Connected;
             });
         }
 
+        private DeviceTypes ToDeviceType() => device switch {
+            ICameraV3 => DeviceTypes.Camera,
+            IDomeV2 => DeviceTypes.Dome,
+            IFilterWheelV2 => DeviceTypes.FilterWheel,
+            ICoverCalibratorV1 => DeviceTypes.CoverCalibrator,
+            IFocuserV3 => DeviceTypes.Focuser,
+            IRotatorV3 => DeviceTypes.Rotator,
+            ASCOM.Common.DeviceInterfaces.ISafetyMonitor => DeviceTypes.SafetyMonitor,
+            ISwitchV2 => DeviceTypes.Switch,
+            ITelescopeV3 => DeviceTypes.Telescope,
+            IObservingConditions => DeviceTypes.ObservingConditions,
+            _ => throw new ArgumentException("Unknown Device Type")
+        };
+
         protected abstract DeviceT GetInstance();
 
-        public void SetupDialog() {            
+        public void SetupDialog() {
             if (HasSetupDialog) {
-                if(deviceMeta is null) {
+                if (!IsAlpacaDevice()) {
                     // ASCOM
                     try {
                         bool dispose = false;
@@ -284,7 +360,7 @@ namespace NINA.Equipment.Equipment {
                     var deviceType = deviceMeta.AscomDeviceType.ToString().ToLower();
                     var deviceNumber = deviceMeta.AlpacaDeviceNumber;
                     var url = $"{protocol}://{ipAddress}:{port}/setup/v1/{deviceType}/{deviceNumber}/setup";
-                    try { 
+                    try {
                         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
                     } catch (Exception ex) {
                         Logger.Error(ex);
@@ -295,7 +371,7 @@ namespace NINA.Equipment.Equipment {
         }
 
         public void Disconnect() {
-            lock (lockObj) {
+            try {
                 Logger.Info($"Disconnecting from {Id} {Name}");
                 Logger.Trace($"{Name} - Calling PreDisconnect");
                 PreDisconnect();
@@ -304,12 +380,31 @@ namespace NINA.Equipment.Equipment {
                 } catch (Exception ex) {
                     Logger.Error(ex);
                 }
-                connected = false;
+                lock (lockObj) {
+                    connectedExpectation = false;
+                    InvalidatePropertyCache();
+                }
+
                 Logger.Trace($"{Name} - Calling PostDisconnect");
                 PostDisconnect();
-                Dispose();
+                if (!IsAlpacaDevice()) {
+                    name = null;
+                    DisplayName = ascomRegistrationName;
+                }
+                RaiseAllPropertiesChanged();
+            } finally {
+                try {
+                    Dispose();
+                } catch { }
+                
             }
-            RaiseAllPropertiesChanged();
+        }
+
+        private void WaitForConnectingFlag() {
+            var start = DateTimeOffset.UtcNow;
+            while (device.Connecting && (DateTimeOffset.UtcNow - start) < TimeSpan.FromMinutes(1)) {
+                Thread.Sleep(100);
+            }
         }
 
         public void Dispose() {
@@ -333,12 +428,38 @@ namespace NINA.Equipment.Equipment {
         /// <param name="useLastKnownValueOnError">When rethrow is false and this is set, the last known value will be used as a fallback. Otherwise the errorValue parameter will be used</param>
         /// <param name="errorValue">The value to be returned when rethrow and useLastKnownValueOnError are both set to false and an error occurs during reading of the property</param>
         /// <returns></returns>
-        protected PropT GetProperty<PropT>(string propertyName, PropT defaultValue, TimeSpan? cacheInterval = null, bool rethrow = false, bool useLastKnownValueOnError = true, PropT errorValue = default) {            
-            if (device != null) {
-                var type = device.GetType();
+        protected PropT GetProperty<PropT>(string propertyName, PropT defaultValue, TimeSpan? cacheInterval = null, bool rethrow = false, bool useLastKnownValueOnError = true, PropT errorValue = default) {
+            if (device == null) { return defaultValue; }
+            if (!ShouldBeConnected) { return defaultValue; }
+
+            if (cacheInterval == null) { cacheInterval = TimeSpan.FromMilliseconds(100); }
+            var interval = TimeSpan.FromMilliseconds(200);
+            var type = device.GetType();
+
+            if (HasDeviceStates && deviceStateKeys.Contains(propertyName.ToLower())) {
+                if ((DateTimeOffset.UtcNow - lastDeviceStatePoll) > cacheInterval) {
+                    for (int i = 0; i < 3; i++) {
+                        try {
+                            if (i > 0) {
+                                Thread.Sleep(interval);
+                                Logger.Info($"Retrying to GET {type.Name}.{propertyName} - Attempt {i + 1} / 3");
+                            }
+                            Logger.Trace($"GET {type.Name}.DeviceState");
+                            lastDeviceState = device.DeviceState;
+                            lastDeviceStatePoll = DateTimeOffset.UtcNow;
+                            break;
+                        } catch (Exception ex) {
+                            Logger.Error($"An unexpected exception occurred during GET of DeviceState: ", ex);
+                            if (rethrow) { throw; }
+                        }
+                    }
+                }
+                var value = (PropT)lastDeviceState.FirstOrDefault(x => x.Name == propertyName)?.Value ?? defaultValue;
+                Logger.Trace($"GET {type.Name}.{propertyName}: {value}");
+                return value;
+            } else {
 
                 if (!propertyGETMemory.TryGetValue(propertyName, out var memory)) {
-                    if (cacheInterval == null) { cacheInterval = TimeSpan.FromMilliseconds(100); }
                     memory = new PropertyMemory(type.GetProperty(propertyName), cacheInterval.Value);
                     lock (propertyGETMemory) {
                         propertyGETMemory[propertyName] = memory;
@@ -347,7 +468,6 @@ namespace NINA.Equipment.Equipment {
 
                 // Retry three times in normal conditions - disable retry when consecutive errors exceed threshold as it will not likely succeed on a retry anyways
                 var retries = memory.ConsecutiveErrors >= memory.ConsecutiveErrorThreshold ? 1 : 3;
-                var interval = TimeSpan.FromMilliseconds(200);
 
                 for (int i = 0; i < retries; i++) {
                     try {
@@ -366,7 +486,7 @@ namespace NINA.Equipment.Equipment {
                             return defaultValue;
                         }
                     } catch (Exception ex) {
-                        if(rethrow) { throw; }
+                        if (rethrow) { throw; }
 
                         memory.ConsecutiveErrors++;
                         if (memory.ConsecutiveErrors == memory.ConsecutiveErrorThreshold) {
@@ -392,7 +512,7 @@ namespace NINA.Equipment.Equipment {
                             }
                         }
 
-                        if(memory.ConsecutiveErrors > memory.ConsecutiveErrorThreshold) {
+                        if (memory.ConsecutiveErrors > memory.ConsecutiveErrorThreshold) {
                             Logger.Trace($"An unexpected exception occurred during GET of {type.Name}.{propertyName} - Consecutive Errors: {memory.ConsecutiveErrors} - Error: {logEx.Message} {logEx.StackTrace}");
                         } else {
                             Logger.Error($"An unexpected exception occurred during GET of {type.Name}.{propertyName}: ", logEx);
@@ -406,14 +526,13 @@ namespace NINA.Equipment.Equipment {
                     Logger.Trace($"GET {type.Name}.{propertyName} failed - Returning {(useLastKnownValueOnError ? "last known" : "error")} value {val}");
                 } else {
                     Logger.Info($"GET {type.Name}.{propertyName} failed - Returning {(useLastKnownValueOnError ? "last known" : "error")} value {val}");
-                }   
+                }
                 return val;
             }
-            return defaultValue;
         }
 
         protected void InvalidatePropertyCache() {
-            if(propertyGETMemory?.Values?.Count > 0) {
+            if (propertyGETMemory?.Values?.Count > 0) {
                 foreach (var property in propertyGETMemory.Values) {
                     property.InvalidateCache();
                 }
@@ -430,6 +549,7 @@ namespace NINA.Equipment.Equipment {
         /// <returns></returns>
         protected bool SetProperty<PropT>(string propertyName, PropT value, TimeSpan? cacheInterval = null, [CallerMemberName] string originalPropertyName = null) {
             if (device != null) {
+                if (!ShouldBeConnected) { return false; }
                 var type = device.GetType();
 
                 if (!propertySETMemory.TryGetValue(propertyName, out var memory)) {
@@ -441,9 +561,9 @@ namespace NINA.Equipment.Equipment {
                 }
 
                 try {
-                    if (memory.IsImplemented && Connected) {
+                    if (memory.IsImplemented && ShouldBeConnected) {
                         memory.SetValue(device, value);
-                        if(propertyGETMemory.TryGetValue(propertyName, out var getmemory)) {
+                        if (propertyGETMemory.TryGetValue(propertyName, out var getmemory)) {
                             getmemory.InvalidateCache();
                         }
 
@@ -532,7 +652,7 @@ namespace NINA.Equipment.Equipment {
             }
 
             public void SetValue(DeviceT device, object value) {
-                lock (lockObj) { 
+                lock (lockObj) {
                     info.SetValue(device, value);
                 }
             }

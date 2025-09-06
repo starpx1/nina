@@ -140,6 +140,7 @@ namespace NINA {
             }
 
             Current.DispatcherUnhandledException += Current_DispatcherUnhandledException;
+            AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
 
             CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
             System.Threading.Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
@@ -164,6 +165,10 @@ namespace NINA {
             _profileService.CreateWatcher();
 
             Logger.SetLogLevel(_profileService.ActiveProfile.ApplicationSettings.LogLevel);
+
+            if (e.Args.Length > 0) {
+                Logger.Info("Launched with command line arguments: " + string.Join(" ", e.Args));
+            }
 
             if (userSettingsException != null) {
                 Logger.Error("There was an issue loading the user settings and the application tried to delete the file and reload default settings.", userSettingsException);
@@ -229,6 +234,21 @@ namespace NINA {
         }
 
         private static object lockObj = new object();
+
+        private void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e) {
+            Exception exception = e.ExceptionObject as Exception;
+            if (exception != null) {
+                Logger.Error($"An unhandled domain exception has occurred of type {exception.GetType()}. Application must terminate: {e.IsTerminating}");
+                if (exception.InnerException != null) {
+                    var message = $"{exception.Message}{Environment.NewLine}{exception.StackTrace}{Environment.NewLine}Inner Exception of type {exception.InnerException.GetType()}: {Environment.NewLine}{exception.InnerException}{exception.StackTrace}";
+                    Logger.Error(message);
+                } else {
+                    Logger.Error(exception);
+                }
+            } else {
+                Logger.Error($"An unhandled domain exception has occurred.");
+            }
+        }
 
         [SecurityCritical]
         private void Current_DispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e) {

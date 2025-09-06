@@ -217,7 +217,12 @@ namespace NINA.WPF.Base.ViewModel.Equipment.FilterWheel {
 
                 if (DeviceChooserVM.SelectedDevice.Id == "No_Device") {
                     profileService.ActiveProfile.FilterWheelSettings.Id = DeviceChooserVM.SelectedDevice.Id;
+                    profileService.ActiveProfile.FilterWheelSettings.LastDeviceName = string.Empty;
                     return false;
+                }
+
+                if (DeviceChooserVM.SelectedDevice is OfflineDevice) {
+                    await Rescan();
                 }
 
                 applicationStatusMediator.StatusUpdate(
@@ -252,6 +257,7 @@ namespace NINA.WPF.Base.ViewModel.Equipment.FilterWheel {
 
                             Notification.ShowSuccess(Loc.Instance["LblFilterwheelConnected"]);
                             profileService.ActiveProfile.FilterWheelSettings.Id = FW.Id;
+                            profileService.ActiveProfile.FilterWheelSettings.LastDeviceName = FW.DisplayName;
                             if (FW.Position > -1) {
                                 FilterWheelInfo.SelectedFilter = FW.Filters[FW.Position];
                             }

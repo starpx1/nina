@@ -15,8 +15,15 @@ using System.Threading.Tasks;
 
 namespace NINA.Equipment.Equipment {
     public class OfflineDevice : IDevice, ICamera, IDome, IFilterWheel, IFlatDevice, IFocuser, IRotator, ISafetyMonitor, ISwitch, ITelescope, IWeatherData {
-        public OfflineDevice(string id) {
-            Name = id + " (OFFLINE)";
+        private string originalName;
+
+        public OfflineDevice(string id, string name) {
+            originalName = name;
+            if (string.IsNullOrWhiteSpace(name)) {
+                Name = id + " (OFFLINE)";
+            } else {
+                Name = name + " (OFFLINE)";
+            }
             Id = id;
         }
 
@@ -40,7 +47,7 @@ namespace NINA.Equipment.Equipment {
         public event PropertyChangedEventHandler PropertyChanged { add { } remove { } }
 
         public async Task<bool> Connect(CancellationToken token) {
-            throw new Exception($"Unable to connect Device {Id} as it is not found!");
+            throw new Exception($"Unable to connect to device '{originalName}' (ID: {Id}). Make sure it's plugged in, turned on, and set up correctly.");
         }
 
         public void Disconnect() {
@@ -310,6 +317,7 @@ namespace NINA.Equipment.Equipment {
         public bool CanSetPierSide => throw new NotImplementedException();
 
         public bool CanSlew => throw new NotImplementedException();
+        public bool CanSlewAltAz => throw new NotImplementedException();
 
         public DateTime UTCDate => throw new NotImplementedException();
 
@@ -463,7 +471,7 @@ namespace NINA.Equipment.Equipment {
             throw new NotImplementedException();
         }
 
-        public Task<bool> Poll() {
+        public bool Poll() {
             throw new NotImplementedException();
         }
 
@@ -508,6 +516,14 @@ namespace NINA.Equipment.Equipment {
         }
 
         public PierSide DestinationSideOfPier(Coordinates coordinates) {
+            throw new NotImplementedException();
+        }
+
+        public Task<bool> SlewToAltAz(TopocentricCoordinates coordinates, CancellationToken token) {
+            throw new NotImplementedException();
+        }
+
+        public void UpdateSubSampleArea() {
             throw new NotImplementedException();
         }
     }
